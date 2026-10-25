@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Configure, build, package, sign, install and launch Qt WebKitView on an OpenHarmony device.
+#
+# Usage:
+#   ./deploy-qtwebkitview [--no-install] [--no-launch]
+#
+# Required, from the environment or from deploy.env next to this script (see deploy.env.example):
+#   WEBKIT_DIST    WebKit for OpenHarmony dist dir (WebKitBuild/OHOS/Release/dist), built with
+#                  `build-webkit-ohos --qt <QT_OHOS>`
+#   QT_OHOS        Qt for OpenHarmony build dir
+#   QT_HOST_PATH   host Qt build of the same version
+#   OHOS_SDK_ROOT  OpenHarmony SDK root
+#
+# Optional:
+#   BUILD_DIR      application build dir             (default: ./build)
+#   QT_DEPLOY      Qt packaging script               (default: tools/qt-ohos-deploy.sh)
+#   APP_IDENTIFIER app-identifier of newly generated signing material (default: 12341235). It
+#                  must differ from those of other apps on the device, and be whitelisted for
+#                  native child processes: tools/prepare-board.sh
+# plus those of QT_DEPLOY (PROFILE_KIND, AUTOSIGN_DIR, HDC_TARGET, ...).
+
+set -Eeuo pipefail
+
+die(){ echo "ERROR: $*" >&2; exit 2; }
+
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The paths of this machine, kept out of the repository.
+if [[ -f "$SRC_DIR/deploy.env" ]]; then
+  # shellcheck source=/dev/null
+  source "$SRC_DIR/deploy.env"
+fi
+for var in WEBKIT_DIST QT_OHOS QT_HOST_PATH OHOS_SDK_ROOT; do
+  [[ -n "${!var:-}" ]] || die "$var is not set; set it in the environment or in $SRC_DIR/deploy.env (see deploy.env.example)"
+done
+BUILD_DIR="${BUILD_DIR:-$SRC_DIR/build}"
+QT_DEPLOY="${QT_DEPLOY:-$SRC_DIR/tools/qt-ohos-deploy.sh}"
+export QT_HOST_PATH OHOS_SDK_ROOT
+export APP_IDENTIFIER="${APP_IDENTIFIER:-12341235}"
+
+[[ -f "$WEBKIT_DIST/lib/qt6/qml/org/wpewebkit/qtwpe/qmldir" ]] \
+  || die "$WEBKIT_DIST has no Qt/QML plugin; build WebKit with: build-webkit-ohos --release --qt $QT_OHOS"
+
+if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+  "$QT_OHOS/bin/qt-cmake" -S "$SRC_DIR" -B "$BUILD_DIR" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DWEBKIT_DIST="$WEBKIT_DIST"
+fi
+
+# WebKit's dlopen'd plugins live in subdirectories of its lib dir, which harmonydeployqt does not
+# deploy: GIO modules (TLS), GStreamer plugins and the injected bundle. main.cpp points WebKit at
+# them under libs/arm64.
+STAGE="$BUILD_DIR/webkit-libs"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+for dir in gio gstreamer-1.0 wpe-webkit-2.0; do
+  [[ -d "$WEBKIT_DIST/lib/$dir" ]] && cp -a "$WEBKIT_DIST/lib/$dir" "$STAGE/"
+done
+
+HAP_LIBS_EXTRA_DIR="$STAGE" HAP_PROJECT_HOOK="$SRC_DIR/harmonyos-project-hook" \
+  exec "$QT_DEPLOY" "$BUILD_DIR" qtwebkitview "$@"

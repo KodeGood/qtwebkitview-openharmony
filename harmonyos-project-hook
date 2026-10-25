@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# HAP_PROJECT_HOOK of qt-ohos-deploy.sh: adjusts the HAP project that Qt generates.
+#
+# Usage: harmonyos-project-hook <harmonyos-project-dir>
+#
+# The window spans the screen under the status and navigation bars, which show the window
+# background (the application palette's Window colour, see main.cpp). Qt has no API for the
+# colour of the bars' content, so give them light content in Qt's generated ability.
+
+set -Eeuo pipefail
+
+ABILITY="$1/entry/src/main/ets/qability/QAbility.ets"
+[[ -f "$ABILITY" ]] || { echo "ERROR: no $ABILITY" >&2; exit 2; }
+
+python3 -I - "$ABILITY" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+anchor = "    qpa.handleAbilityOnWindowStageCreate(this, windowStage);\n"
+patch = """    const systemBarProperties: Window.SystemBarProperties = {
+      statusBarColor: '#000000',
+      statusBarContentColor: '#ffffff',
+      navigationBarColor: '#000000',
+      navigationBarContentColor: '#ffffff'
+    };
+    windowStage.getMainWindowSync().setWindowSystemBarProperties(systemBarProperties).catch((error: Error) => {
+      hilog.warn(LOG_DOMAIN, LOG_TAG, 'setWindowSystemBarProperties() failed: ' + JSON.stringify(error));
+    });
+"""
+
+source = open(path).read()
+# The deployment keeps the generated project between runs: drop a block of an earlier run.
+source = re.sub(r"    const systemBarProperties: .*?\n    \}\);\n", "", source, flags=re.S)
+if source.count(anchor) != 1:
+    sys.exit(f"ERROR: {path}: no single '{anchor.strip()}' to patch")
+open(path, "w").write(source.replace(anchor, patch + anchor))
+PY
