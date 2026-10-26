@@ -198,7 +198,7 @@ Item {
             id: credit
             anchors.centerIn: parent
             textFormat: Text.StyledText
-            text: "Powered by <b>Qt</b> and <b>WebKit</b>"
+            text: "Built with <b>Qt</b> and <b>WebKit</b>"
             color: "#ffffff"
             font.pixelSize: 13
         }
